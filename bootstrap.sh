@@ -9,7 +9,7 @@
 #   1. Installs Bun (if missing)
 #   2. Clones figma-edit-mcp to ~/Documents/CLAUDE/figma-edit-mcp
 #   3. Installs deps & builds MCP server + Figma plugin
-#   4. Registers the MCP server with Claude Code (user scope)
+#   4. Registers MCP servers in ~/.claude/.mcp.json
 #   5. Creates a launcher script for the WebSocket bridge
 # ============================================================
 
@@ -17,6 +17,7 @@ set -e
 
 INSTALL_DIR="$HOME/Documents/CLAUDE/figma-edit-mcp"
 REPO_URL="https://github.com/neozhehan/figma-edit-mcp.git"
+MCP_CONFIG="$HOME/.claude/.mcp.json"
 
 echo ""
 echo "=========================================="
@@ -57,33 +58,35 @@ bun run build
 echo "🔨 Building Figma plugin..."
 bun run plugin:build
 
-# --- 4. Claude Code MCP registration ---
+# --- 4. Register MCP servers in ~/.claude/.mcp.json ---
 echo ""
-echo "🔧 Registering with Claude Code..."
+echo "🔧 Registering MCP servers..."
 
-SETTINGS_DIR="$HOME/.claude"
-SETTINGS_FILE="$SETTINGS_DIR/settings.json"
+mkdir -p "$HOME/.claude"
 
-mkdir -p "$SETTINGS_DIR"
-
-if [ ! -f "$SETTINGS_FILE" ]; then
-  echo '{}' > "$SETTINGS_FILE"
-fi
-
-# Use bun to merge the MCP config safely
+# Use bun to safely merge into .mcp.json
 bun -e "
 const fs = require('fs');
-const path = '$SETTINGS_FILE';
-let settings = {};
-try { settings = JSON.parse(fs.readFileSync(path, 'utf8')); } catch {}
-if (!settings.mcpServers) settings.mcpServers = {};
-settings.mcpServers['figma-edit'] = {
-  command: process.env.HOME + '/.bun/bin/bun',
-  args: ['run', '$INSTALL_DIR/dist/server.js'],
-  type: 'stdio'
+const path = '$MCP_CONFIG';
+let config = { mcpServers: {} };
+try { config = JSON.parse(fs.readFileSync(path, 'utf8')); } catch {}
+if (!config.mcpServers) config.mcpServers = {};
+
+// Figma Desktop (official MCP — reads designs via API)
+config.mcpServers['figma-desktop'] = {
+  type: 'http',
+  url: 'http://127.0.0.1:3845/mcp'
 };
-fs.writeFileSync(path, JSON.stringify(settings, null, 2));
-console.log('   ✅ Added figma-edit to ~/.claude/settings.json');
+
+// Figma Edit (40+ edit tools via WebSocket bridge + plugin)
+config.mcpServers['FigmaEdit'] = {
+  type: 'stdio',
+  command: process.env.HOME + '/.bun/bin/bun',
+  args: ['run', '$INSTALL_DIR/dist/server.js']
+};
+
+fs.writeFileSync(path, JSON.stringify(config, null, 2));
+console.log('   ✅ figma-desktop + FigmaEdit added to ~/.claude/.mcp.json');
 "
 
 # --- 5. Bridge launcher ---
@@ -105,6 +108,10 @@ echo "=========================================="
 echo "  ✅ Setup Complete!"
 echo "=========================================="
 echo ""
+echo "  TWO MCP SERVERS CONFIGURED:"
+echo "  • figma-desktop  — Official Figma MCP (read designs, screenshots)"
+echo "  • FigmaEdit      — Edit MCP (40+ tools to modify Figma files)"
+echo ""
 echo "  NEXT STEPS:"
 echo ""
 echo "  1. START THE BRIDGE (keep running in a terminal):"
@@ -118,7 +125,8 @@ echo "     • Run the plugin from Plugins → Development → Figma Edit MCP"
 echo ""
 echo "  3. USE IN CLAUDE CODE:"
 echo "     • Restart Claude Code (or start a new session)"
-echo "     • The 'figma-edit' MCP tools will be available automatically"
+echo "     • Both Figma MCP servers will be available automatically"
 echo ""
-echo "  To update later:  cd $INSTALL_DIR && git pull && bun run build && bun run plugin:build"
+echo "  To update later:"
+echo "     cd $INSTALL_DIR && git pull && bun run build && bun run plugin:build"
 echo ""
