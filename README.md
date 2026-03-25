@@ -1,83 +1,61 @@
-# Figma Edit MCP — Setup Reference
+# Figma Edit MCP — Claude Code Bootstrap
 
-Personal reference repo for setting up the [figma-edit-mcp](https://github.com/neozhehan/figma-edit-mcp) integration with Claude Code on any new Mac.
+One-command setup for [figma-edit-mcp](https://github.com/neozhehan/figma-edit-mcp) integrated with Claude Code.
 
-## One-Command Setup
+## Quick Install (any Mac)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/MJB1000/figma-edit-mcp-setup/main/bootstrap.sh)
+curl -fsSL https://raw.githubusercontent.com/MJB1000/figma-edit-mcp-setup/main/bootstrap.sh | bash
 ```
 
-## What This Does
+## What it does
 
-1. Installs [Bun](https://bun.sh) runtime (if missing)
-2. Clones the `figma-edit-mcp` repo to `~/Documents/CLAUDE/figma-edit-mcp/`
-3. Installs dependencies and builds the MCP server + Figma plugin
-4. Adds `FigmaEdit` to Claude Code's MCP config (`~/.claude/.mcp.json`)
-5. Creates a bridge launcher script
+1. **Installs Bun** (if not present)
+2. **Clones** [figma-edit-mcp](https://github.com/neozhehan/figma-edit-mcp) to `~/Documents/CLAUDE/figma-edit-mcp`
+3. **Builds** the MCP server + Figma plugin
+4. **Registers** the MCP server in `~/.claude/settings.json` (user scope)
+5. **Creates** a bridge launcher script
+
+## After Install — 3 Steps
+
+### 1. Start the WebSocket bridge
+```bash
+~/Documents/CLAUDE/figma-edit-mcp/start-bridge.sh
+```
+Keep this terminal open while working.
+
+### 2. Install the Figma plugin
+- Open **Figma Desktop**
+- Menu → **Plugins** → **Development** → **Import plugin from manifest...**
+- Select: `~/Documents/CLAUDE/figma-edit-mcp/src/figma_plugin/manifest.json`
+- Run the plugin from **Plugins → Development → Figma Edit MCP**
+
+### 3. Use in Claude Code
+- Start a new Claude Code session
+- The `figma-edit` MCP tools (40+) are automatically available
+- Read designs, create/modify elements, manage design systems
+
+## Update
+
+```bash
+cd ~/Documents/CLAUDE/figma-edit-mcp && git pull && bun run build && bun run plugin:build
+```
 
 ## Architecture
 
 ```
-Claude Code ←→ MCP Server (stdio/bun) ←→ WebSocket Bridge (port 3055) ←→ Figma Plugin (Desktop)
+Claude Code ←(stdio)→ MCP Server ←(WebSocket)→ Figma Plugin (in Figma Desktop)
 ```
 
-## After Bootstrap — Manual Steps
+- **MCP Server** (`dist/server.js`): 40+ tools for reading/editing Figma files
+- **WebSocket Bridge** (`src/socket.ts`): Connects MCP server to Figma plugin
+- **Figma Plugin**: Runs inside Figma Desktop, executes commands on the canvas
 
-### One-Time: Install Figma Plugin
-1. Open Figma Desktop
-2. Plugins → Development → **Import plugin from manifest**
-3. Select: `~/Documents/CLAUDE/figma-edit-mcp/src/figma_plugin/manifest.json`
+## Note on Device Independence
 
-### Each Session
-1. **Start the bridge** (keep terminal open):
-   ```bash
-   ~/Documents/CLAUDE/figma-edit-mcp/start-bridge.sh
-   ```
-2. **In Figma Desktop**, run the "Figma Edit MCP Plugin" and paste your frame link to set edit scope
-3. **In Claude Code**, FigmaEdit tools (40+) are available
+This setup requires **Figma Desktop** running on the same machine (the WebSocket bridge is `localhost`). When moving to a new device:
+1. Run the bootstrap script
+2. Re-import the Figma plugin
+3. Start the bridge
 
-## Available Tools (40+)
-
-| Category | Tools |
-|---|---|
-| **Document** | `get_document_info`, `get_nodes_info`, `scan_nodes_by_types`, `set_selections` |
-| **Create** | `create_frame`, `create_rectangle`, `create_text`, `create_node_from_svg` |
-| **Modify** | `clone_node`, `move_node`, `resize_node`, `delete_multiple_nodes`, `set_node_name` |
-| **Style** | `set_fill_color`, `set_stroke_color`, `set_corner_radius`, `set_effects` |
-| **Layout** | `set_layout_mode`, `set_padding`, `set_axis_align`, `set_layout_sizing`, `set_item_spacing` |
-| **Text** | `scan_text_nodes`, `set_multiple_text_contents` |
-| **Components** | `create_component`, `create_component_instance`, `get_instance_overrides`, `set_instance_overrides` |
-| **Variables** | `get_variables`, `get_node_variables`, `set_bound_variable`, `manage_variables` |
-| **Export** | `export_node_as_image` (PNG, JPG, SVG, PDF) |
-
-## Key Differences from Official Figma MCP
-
-| | Official Figma MCP | FigmaEdit |
-|---|---|---|
-| **Write access** | Limited (`use_figma` single script) | 40+ dedicated write tools |
-| **Batch ops** | Manual scripting | Built-in batch tools |
-| **Safety** | No guardrails | Name-matching + scope locking |
-| **Dependency** | HTTP (works anywhere) | Requires Figma Desktop + bridge |
-
-**Best practice**: Use both together. Official MCP for reads/screenshots, FigmaEdit for heavy editing.
-
-## Requirements
-- macOS
-- Figma Desktop (with plugin support)
-- Claude Code (CLI or VS Code)
-
-## MCP Config Reference
-
-`~/.claude/.mcp.json`:
-```json
-{
-  "mcpServers": {
-    "FigmaEdit": {
-      "type": "stdio",
-      "command": "/Users/YOUR_USERNAME/.bun/bin/bun",
-      "args": ["run", "/Users/YOUR_USERNAME/Documents/CLAUDE/figma-edit-mcp/dist/server.js"]
-    }
-  }
-}
-```
+Your Claude Code MCP config (`~/.claude/settings.json`) will be set up automatically.

@@ -1,162 +1,124 @@
 #!/bin/bash
 # ============================================================
-# Figma Edit MCP — One-Command Bootstrap
+# Figma Edit MCP — One-Command Bootstrap for Claude Code
 # ============================================================
-# Run this on any new Mac to set up the full Figma Edit MCP
-# integration for Claude Code.
-#
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/main/bootstrap.sh | bash
-#   — or —
-#   bash bootstrap.sh
+# Run on any new Mac:
+#   curl -fsSL https://raw.githubusercontent.com/MJB1000/figma-edit-mcp-setup/main/bootstrap.sh | bash
 #
 # What it does:
 #   1. Installs Bun (if missing)
-#   2. Clones figma-edit-mcp repo
-#   3. Installs dependencies + builds
-#   4. Configures Claude Code MCP integration
-#   5. Creates bridge launcher script
-#   6. Prints next steps (Figma plugin install)
+#   2. Clones figma-edit-mcp to ~/Documents/CLAUDE/figma-edit-mcp
+#   3. Installs deps & builds MCP server + Figma plugin
+#   4. Registers the MCP server with Claude Code (user scope)
+#   5. Creates a launcher script for the WebSocket bridge
 # ============================================================
 
 set -e
 
 INSTALL_DIR="$HOME/Documents/CLAUDE/figma-edit-mcp"
-MCP_CONFIG="$HOME/.claude/.mcp.json"
-BUN_BIN="$HOME/.bun/bin/bun"
+REPO_URL="https://github.com/neozhehan/figma-edit-mcp.git"
 
 echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║   Figma Edit MCP — Bootstrap Installer       ║"
-echo "╚══════════════════════════════════════════════╝"
+echo "=========================================="
+echo "  Figma Edit MCP — Bootstrap Setup"
+echo "=========================================="
 echo ""
 
-# -----------------------------------------------------------
-# 1. Install Bun
-# -----------------------------------------------------------
-if [ -f "$BUN_BIN" ]; then
-  echo "✅ Bun already installed: $($BUN_BIN --version)"
-else
+# --- 1. Bun ---
+if ! command -v bun &>/dev/null && [ ! -f "$HOME/.bun/bin/bun" ]; then
   echo "📦 Installing Bun..."
   curl -fsSL https://bun.sh/install | bash
-  # Source the updated path
   export PATH="$HOME/.bun/bin:$PATH"
-  echo "✅ Bun installed: $($BUN_BIN --version)"
+else
+  echo "✅ Bun already installed"
+  export PATH="$HOME/.bun/bin:$PATH"
 fi
 
-# -----------------------------------------------------------
-# 2. Clone repo (or pull if exists)
-# -----------------------------------------------------------
+# --- 2. Clone ---
 if [ -d "$INSTALL_DIR/.git" ]; then
-  echo "📂 Repo already exists, pulling latest..."
-  cd "$INSTALL_DIR" && git pull origin main
+  echo "✅ Repo already cloned at $INSTALL_DIR"
+  cd "$INSTALL_DIR"
+  echo "   Pulling latest..."
+  git pull --ff-only 2>/dev/null || echo "   (pull skipped — local changes exist)"
 else
   echo "📥 Cloning figma-edit-mcp..."
   mkdir -p "$(dirname "$INSTALL_DIR")"
-  git clone https://github.com/neozhehan/figma-edit-mcp.git "$INSTALL_DIR"
+  git clone "$REPO_URL" "$INSTALL_DIR"
+  cd "$INSTALL_DIR"
 fi
 
-# -----------------------------------------------------------
-# 3. Install dependencies + build
-# -----------------------------------------------------------
-cd "$INSTALL_DIR"
-echo "📦 Installing dependencies..."
-"$BUN_BIN" install
+# --- 3. Build ---
+echo "🔨 Installing dependencies..."
+bun install
 
 echo "🔨 Building MCP server..."
-"$BUN_BIN" run build
+bun run build
 
 echo "🔨 Building Figma plugin..."
-"$BUN_BIN" run plugin:build
+bun run plugin:build
 
-# -----------------------------------------------------------
-# 4. Configure Claude Code MCP
-# -----------------------------------------------------------
-echo "⚙️  Configuring Claude Code..."
-mkdir -p "$(dirname "$MCP_CONFIG")"
+# --- 4. Claude Code MCP registration ---
+echo ""
+echo "🔧 Registering with Claude Code..."
 
-if [ -f "$MCP_CONFIG" ]; then
-  # Check if FigmaEdit already exists in config
-  if grep -q '"FigmaEdit"' "$MCP_CONFIG" 2>/dev/null; then
-    echo "✅ FigmaEdit already in Claude Code MCP config"
-  else
-    # Use a temp file approach to merge into existing config
-    # Insert FigmaEdit server before the closing braces
-    python3 -c "
-import json, sys
-with open('$MCP_CONFIG', 'r') as f:
-    config = json.load(f)
-config.setdefault('mcpServers', {})
-config['mcpServers']['FigmaEdit'] = {
-    'type': 'stdio',
-    'command': '$BUN_BIN',
-    'args': ['run', '$INSTALL_DIR/dist/server.js']
-}
-with open('$MCP_CONFIG', 'w') as f:
-    json.dump(config, f, indent=2)
-    f.write('\n')
-"
-    echo "✅ Added FigmaEdit to Claude Code MCP config"
-  fi
-else
-  cat > "$MCP_CONFIG" << MCPEOF
-{
-  "mcpServers": {
-    "FigmaEdit": {
-      "type": "stdio",
-      "command": "$BUN_BIN",
-      "args": ["run", "$INSTALL_DIR/dist/server.js"]
-    }
-  }
-}
-MCPEOF
-  echo "✅ Created Claude Code MCP config"
+SETTINGS_DIR="$HOME/.claude"
+SETTINGS_FILE="$SETTINGS_DIR/settings.json"
+
+mkdir -p "$SETTINGS_DIR"
+
+if [ ! -f "$SETTINGS_FILE" ]; then
+  echo '{}' > "$SETTINGS_FILE"
 fi
 
-# -----------------------------------------------------------
-# 5. Make bridge launcher executable
-# -----------------------------------------------------------
-chmod +x "$INSTALL_DIR/start-bridge.sh" 2>/dev/null || true
+# Use bun to merge the MCP config safely
+bun -e "
+const fs = require('fs');
+const path = '$SETTINGS_FILE';
+let settings = {};
+try { settings = JSON.parse(fs.readFileSync(path, 'utf8')); } catch {}
+if (!settings.mcpServers) settings.mcpServers = {};
+settings.mcpServers['figma-edit'] = {
+  command: process.env.HOME + '/.bun/bin/bun',
+  args: ['run', '$INSTALL_DIR/dist/server.js'],
+  type: 'stdio'
+};
+fs.writeFileSync(path, JSON.stringify(settings, null, 2));
+console.log('   ✅ Added figma-edit to ~/.claude/settings.json');
+"
 
-# Create launcher if it doesn't exist
-if [ ! -f "$INSTALL_DIR/start-bridge.sh" ]; then
-  cat > "$INSTALL_DIR/start-bridge.sh" << 'BRIDGEOF'
+# --- 5. Bridge launcher ---
+BRIDGE_SCRIPT="$INSTALL_DIR/start-bridge.sh"
+cat > "$BRIDGE_SCRIPT" << 'BRIDGE_INNER'
 #!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BUN="$HOME/.bun/bin/bun"
-echo "🔌 Starting Figma Edit MCP WebSocket Bridge..."
-echo "   Bridge: ws://localhost:3055"
+cd "$(dirname "$0")"
+export PATH="$HOME/.bun/bin:$PATH"
+echo "🔌 Starting Figma Edit MCP WebSocket bridge..."
+echo "   Keep this terminal open while using Figma + Claude Code"
 echo "   Press Ctrl+C to stop"
 echo ""
-cd "$SCRIPT_DIR" && "$BUN" socket
-BRIDGEOF
-  chmod +x "$INSTALL_DIR/start-bridge.sh"
-fi
+bun run src/socket.ts
+BRIDGE_INNER
+chmod +x "$BRIDGE_SCRIPT"
 
-# -----------------------------------------------------------
-# Done!
-# -----------------------------------------------------------
 echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║   ✅ Setup Complete!                         ║"
-echo "╚══════════════════════════════════════════════╝"
+echo "=========================================="
+echo "  ✅ Setup Complete!"
+echo "=========================================="
 echo ""
-echo "📍 Installed to: $INSTALL_DIR"
+echo "  NEXT STEPS:"
 echo ""
-echo "━━━ NEXT STEPS (manual, one-time) ━━━━━━━━━━━━"
+echo "  1. START THE BRIDGE (keep running in a terminal):"
+echo "     $BRIDGE_SCRIPT"
 echo ""
-echo "1. Install the Figma plugin:"
-echo "   → Figma Desktop → Plugins → Development"
-echo "   → Import plugin from manifest"
-echo "   → Select: $INSTALL_DIR/src/figma_plugin/manifest.json"
+echo "  2. INSTALL THE FIGMA PLUGIN:"
+echo "     • Open Figma Desktop"
+echo "     • Menu → Plugins → Development → Import plugin from manifest..."
+echo "     • Select: $INSTALL_DIR/src/figma_plugin/manifest.json"
+echo "     • Run the plugin from Plugins → Development → Figma Edit MCP"
 echo ""
-echo "━━━ EACH SESSION ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  3. USE IN CLAUDE CODE:"
+echo "     • Restart Claude Code (or start a new session)"
+echo "     • The 'figma-edit' MCP tools will be available automatically"
 echo ""
-echo "1. Start the bridge (keep terminal open):"
-echo "   $INSTALL_DIR/start-bridge.sh"
-echo ""
-echo "2. In Figma Desktop, run the plugin and paste"
-echo "   your frame link to set edit scope"
-echo ""
-echo "3. In Claude Code, FigmaEdit tools are ready!"
+echo "  To update later:  cd $INSTALL_DIR && git pull && bun run build && bun run plugin:build"
 echo ""
